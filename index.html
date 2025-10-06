@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Daily Groups — Prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Fallback-safe system font stack; web fonts optional in real app -->
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">DG</span>
+        <span class="brand-name">Daily Groups</span>
+      </div>
+      <nav class="nav-tabs" role="tablist">
+        <a href="#home" class="nav-tab is-active" data-route="home">Home</a>
+        <a href="#groups" class="nav-tab" data-route="groups">Groups</a>
+        <a href="#user" class="nav-tab" data-route="user">User</a>
+      </nav>
+      <div class="header-actions">
+        <button id="notifBtn" class="icon-btn" title="Notifications" aria-label="Notifications">
+          <span class="icon">🔔</span>
+        </button>
+        <button id="userBtn" class="icon-btn" title="Account" aria-label="Account">
+          <span class="avatar">KJ</span>
+        </button>
+      </div>
+    </header>
+
+    <main id="app" class="app-main">
+      <!-- Views are injected here by app.js -->
+    </main>
+
+    <!-- Modal root -->
+    <div id="modal-root" class="modal-root" aria-live="polite"></div>
+
+    <footer class="app-footer">
+      <div>no backend yet.</div>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+  </html>
+
+
