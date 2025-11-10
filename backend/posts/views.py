@@ -5,6 +5,16 @@ from django.forms.models import model_to_dict
 from django.utils.dateparse import parse_date
 from django.contrib.auth.decorators import login_required
 from .models import Group, Post
+
+"""
+s3 imports
+"""
+from django.utils import timezone
+from ..storage.s3_utils import presign_download
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from ..storage.s3_utils import build_key, presign_upload, presign_download
 import json
 
 
@@ -133,3 +143,52 @@ def group_detail(request, group_id: int):
         return JsonResponse({"ok": True})
 
     return JsonResponse({"detail": "Method not allowed"}, status=405)
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def create_post_from_s3(request):
+    """
+    Body:
+      {
+        "group_id": 123,
+        "key": "groups/123/<uuid>.jpg",
+        "caption": "optional"
+      }
+    """
+    group_id = request.data.get("group_id")
+    key = (request.data.get("key") or "").strip()
+    caption = (request.data.get("caption") or "").strip()
+
+    if not group_id or not key:
+        return Response({"detail":"group_id and key required"}, status=400)
+
+    group = get_object_or_404(Group, pk=group_id)
+
+    # Prefer storing the S3 key on the Post (see Step 2).
+    if hasattr(Post, "image_key"):
+        post = Post.objects.create(
+            group=group,
+            user_name=request.user.get_username(),
+            caption=caption,
+            image_key=key,
+        )
+    else:
+        # Fallback: create without local image; you'll still return a view URL.
+        post = Post.objects.create(
+            group=group,
+            user_name=request.user.get_username(),
+            caption=caption,
+        )
+
+    # Private bucket (recommended): short-lived view URL
+    image_url = presign_download(key)
+
+    return Response({
+        "id": post.id,
+        "user_name": post.user_name,
+        "caption": post.caption,
+        "image_url": image_url,
+        "date": timezone.now().date().isoformat(),
+        "group_id": group.id,
+        "key": key
+    }, status=201)

@@ -10,4 +10,8 @@ urlpatterns = [
     # Posts
     path("posts/", views.posts_list, name="posts_list"),
     path("posts/upload/", views.upload_post, name="upload_post"),
+    
+    # Amazons3
+    path("api/upload-url/", views.start_photo_upload),
+    path("api/confirm-upload/", views.create_post_from_s3, name="confirm_upload"),
 ]

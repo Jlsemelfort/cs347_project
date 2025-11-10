@@ -18,3 +18,14 @@ dist/
 # macOS
 .DS_Store
 
+
+# Ignore heavy stuff
+node_modules/
+.dist/
+build/
+.DS_Store
+storage/
+.env
+*.venv/
+.venv/
+
