@@ -8,6 +8,81 @@
   const todayISO = () => new Date().toISOString().slice(0, 10);
   const fmtDate = (d) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' });
 
+  //** leaderboard utils */
+
+  function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+  function daysAgo(n) { const d = new Date(); d.setDate(d.getDate() - n); return startOfDay(d); }
+  function isSameDay(a, b) { return startOfDay(a).getTime() === startOfDay(b).getTime(); }
+
+  function inWindow(date, period) {
+    const dt = new Date(date);
+    if (period === 'daily') return isSameDay(dt, new Date());
+    if (period === 'weekly') return dt >= daysAgo(6);      // last 7 days including today
+    if (period === 'monthly') return dt >= daysAgo(29);     // last 30 days
+    return true;
+  }
+
+  // returns the streak
+  function currentStreakForUser(posts) {
+    // build a set of iso days the user posted
+    const days = new Set(posts.map(p => new Date(p.date).toISOString().slice(0, 10)));
+    let streak = 0;
+    for (let i = 0; i < 365; i++) { // cap at 1yr
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const iso = d.toISOString().slice(0, 10);
+      if (days.has(iso)) streak++;
+      else break;
+    }
+    return streak;
+  }
+
+  // build a per-group leaderboard
+  function buildLeaderboard(group, period = 'weekly') {
+    const memberIndex = new Map(group.members.map(m => [m.id, m]));
+    // bucket posts by user
+    const byUser = new Map();
+    for (const p of group.posts) {
+      if (!byUser.has(p.userId)) byUser.set(p.userId, []);
+      byUser.get(p.userId).push(p);
+    }
+    // include members with 0 posts
+    for (const m of group.members) {
+      if (!byUser.has(m.id)) byUser.set(m.id, []);
+    }
+
+    const rows = [];
+    for (const [userId, posts] of byUser) {
+      const member = memberIndex.get(userId) || { id: userId, name: posts[0]?.userName || 'Unknown' };
+      const inPeriod = posts.filter(p => inWindow(p.date, period));
+      const totalPosts = inPeriod.length;
+
+      // active days = distinct calendar dates with >=1 post in the window
+      const activeDaySet = new Set(inPeriod.map(p => new Date(p.date).toISOString().slice(0, 10)));
+      const activeDays = activeDaySet.size;
+
+      const streak = currentStreakForUser(posts); // overall streak (not limited to window)
+
+      const lastPost = posts
+        .map(p => new Date(p.date))
+        .sort((a, b) => b - a)[0] || null;
+
+      rows.push({
+        userId, name: member.name || 'Unknown',
+        activeDays, totalPosts, streak, lastPost
+      });
+    }
+
+    // Sort by activeDays desc, totalPosts desc, streak desc, lastPost desc
+    rows.sort((a, b) =>
+      (b.activeDays - a.activeDays) ||
+      (b.totalPosts - a.totalPosts) ||
+      (b.streak - a.streak) ||
+      ((b.lastPost?.getTime() || 0) - (a.lastPost?.getTime() || 0))
+    );
+    return rows.map((r, i) => ({ rank: i + 1, ...r }));
+  }
+
   function svgPlaceholder(text, bg = '#98c8ff') {
     const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='800' height='600'>
       <defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
@@ -35,7 +110,7 @@
           </div>
           <div class="row" style="gap:10px;">
             <span class="group-dot" style="background:#5aa6ff"></span>
-            <div><strong>${currentUser.name}</strong><div class="muted">@${(currentUser.username||currentUser.name||'').toLowerCase()}</div></div>
+            <div><strong>${currentUser.name}</strong><div class="muted">@${(currentUser.username || currentUser.name || '').toLowerCase()}</div></div>
           </div>
           <div class="row" style="justify-content:flex-end; gap:8px;">
             <button class="ghost-btn" data-close>Close</button>
@@ -99,7 +174,7 @@
           try {
             const me = await postJSON('/auth/login/', { username, password });
             currentUser = { id: String(me.id), name: me.name || me.username, initials: me.initials || 'ME', username: me.username };
-            try { await loadGroups(); } catch {}
+            try { await loadGroups(); } catch { }
             refreshAvatar();
             closeModal();
             render();
@@ -115,7 +190,7 @@
           try {
             const me = await postJSON('/auth/signup/', { name, username, password });
             currentUser = { id: String(me.id), name: me.name || me.username, initials: me.initials || 'ME', username: me.username };
-            try { await loadGroups(); } catch {}
+            try { await loadGroups(); } catch { }
             refreshAvatar();
             closeModal();
             render();
@@ -125,7 +200,7 @@
         });
         const logoutBtn = $('#logoutBtn', wrap);
         if (logoutBtn) logoutBtn.addEventListener('click', async () => {
-          try { await postJSON('/auth/logout/', {}); } catch {}
+          try { await postJSON('/auth/logout/', {}); } catch { }
           currentUser = { id: 'anon', name: 'Guest', initials: 'GU' };
           groups = [];
           selectedGroupId = null;
@@ -190,7 +265,7 @@
       credentials: 'include',
     });
     if (!res.ok) {
-      let data = null; try { data = await res.json(); } catch {}
+      let data = null; try { data = await res.json(); } catch { }
       throw Object.assign(new Error(data?.detail || `DELETE ${path} failed`), { data });
     }
     try { return await res.json(); } catch { return { ok: true }; }
@@ -224,16 +299,33 @@
   async function loadGroups() {
     const resp = await getJSON('/groups/');
     const apiGroups = resp?.results || [];
-    groups = apiGroups.map((g, idx) => ({
-      id: g.id,
-      name: g.name,
-      color: g.color || '#6b9bff',
-      description: g.description || '',
-      members: Array.isArray(g.members) ? g.members : [],
-      memberNames: Array.isArray(g.member_usernames) ? g.member_usernames : [],
-      posts: [],
-      expanded: idx === 0, // first group open
-    }));
+    groups = apiGroups.map((g, idx) => {
+      const memberNames = Array.isArray(g.member_usernames) ? g.member_usernames : [];
+      const membersFromIds = Array.isArray(g.members)
+        ? g.members.map((id) => ({ id: String(id), name: 'Member' }))
+        : [];
+      const members = membersFromIds.length
+        ? membersFromIds
+        : memberNames.map((n) => ({ id: null, name: n }));
+      const parsedCount = Number(g.member_count);
+      const memberCount = Number.isFinite(parsedCount)
+        ? parsedCount
+        : (Array.isArray(g.members) ? g.members.length : memberNames.length);
+      return {
+        id: g.id,
+        name: g.name,
+        color: g.color || '#6b9bff',
+        description: g.description || '',
+        members,
+        memberNames,
+        memberCount,
+        isPrivate: Boolean(g.is_private),
+        isCreator: Boolean(g.is_creator),
+        isMember: g.is_member !== false,
+        posts: [],
+        expanded: idx === 0,
+      };
+    });
     if (!selectedGroupId && groups.length) {
       selectedGroupId = groups[0].id;
     }
@@ -294,18 +386,33 @@
     container.innerHTML = `
       <div class="search-row">
         <input id="homeSearch" class="search-input" placeholder="Search your groups..." />
-        <button id="addGroupBtn" class="primary-btn">+ New Group</button>
+        <div class="row" style="gap:8px; justify-content:flex-end;">
+          <button id="homeJoinBtn" class="ghost-btn">Join Group</button>
+          <button id="addGroupBtn" class="primary-btn">+ New Group</button>
+        </div>
       </div>
       <div id="groupList"></div>
     `;
     app.replaceChildren(container);
     $('#addGroupBtn').addEventListener('click', () => openGroupEditor());
+    $('#homeJoinBtn').addEventListener('click', () => openJoinGroupDialog());
     const list = $('#groupList');
     const q = $('#homeSearch');
     function paint() {
-      list.replaceChildren(...groups
-        .filter(g => g.name.toLowerCase().includes(q.value.trim().toLowerCase()))
-        .map(renderGroupCard));
+      const term = q.value.trim().toLowerCase();
+      const filtered = groups.filter(g => g.name.toLowerCase().includes(term));
+      if (!filtered.length) {
+        list.innerHTML = `
+          <section class="group-card" style="text-align:center; padding:24px;">
+            <div class="muted" style="margin-bottom:12px;">You haven't joined any groups yet.</div>
+            <button class="primary-btn" id="emptyJoinBtn">Find a Group to Join</button>
+          </section>
+        `;
+        const emptyBtn = $('#emptyJoinBtn');
+        if (emptyBtn) emptyBtn.addEventListener('click', () => openJoinGroupDialog());
+        return;
+      }
+      list.replaceChildren(...filtered.map(renderGroupCard));
     }
     q.addEventListener('input', paint);
     paint();
@@ -416,6 +523,9 @@
   function renderGroupCard(group) {
     const meName = (currentUser && currentUser.name) || '';
     const postedByMeToday = (group.posts || []).some(p => (p && (p.userId === currentUser.id || p.userName === meName)) && p.date === todayISO());
+    const visibleMembers = (group.members || []).slice(0, 6);
+    const memberCount = group.memberCount ?? group.members.length;
+    const remainingMembers = Math.max(0, memberCount - visibleMembers.length);
     const card = document.createElement('section');
     card.className = 'group-card';
     card.innerHTML = `
@@ -423,6 +533,7 @@
         <span class="group-dot" style="background:${group.color}"></span>
         <div class="row" style="gap:12px">
           <div class="group-title">${group.name}</div>
+          ${group.isPrivate ? '<span class="chip chip-private">Private</span>' : ''}
           <div class="group-date">${fmtDate(new Date())}</div>
           <div class="post-today ${postedByMeToday ? 'is-done' : ''}">
             <span class="dot"></span>
@@ -430,6 +541,7 @@
           </div>
         </div>
         <div class="group-actions">
+          <button class="ghost-btn" aria-label="Leaderboard" title="Leaderboard" data-leaderboard>🏆</button>
           <button class="expand-btn" aria-label="Toggle details">${group.expanded ? 'Collapse' : 'Expand'}</button>
           <button class="plus-btn" title="Add post" aria-label="Add post"></button>
         </div>
@@ -442,8 +554,10 @@
           <div><strong>Description:</strong> ${group.description || '<span class="muted">No description</span>'}</div>
           <div>
             <strong>Members:</strong>
-            ${group.members.map(m => `<span class='chip'>${m.name}</span>`).join(' ')}
+            ${visibleMembers.length ? visibleMembers.map(m => `<span class='chip'>${m.name}</span>`).join(' ') : '<span class="muted">No members yet</span>'}
+            ${remainingMembers > 0 ? `<span class='chip'>+${remainingMembers} more</span>` : ''}
           </div>
+          ${group.isPrivate ? '<div><span class="chip chip-private">Private group — hidden from search</span></div>' : ''}
         </div>
       </div>
     `;
@@ -458,6 +572,10 @@
     // Add post flow
     const plus = $('.plus-btn', card);
     plus.addEventListener('click', () => openAddPostDialog(group.id));
+
+    //leaderboard
+    const lb = $('[data-leaderboard]', card);
+    lb.addEventListener('click', () => openLeaderboardModal(group, 'weekly'));
 
     // Post interactions
     $$('.post-card', card).forEach((el) => attachPostHandlers(el, group.id));
@@ -499,6 +617,88 @@
   }
 
   // Groups View -------------------------------------------------------------
+  function openJoinGroupDialog() {
+    if (!currentUser || currentUser.id === 'anon') { openAuthModal(); return; }
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+      <label>Search Public Groups
+        <input id="joinSearch" class="search-input" placeholder="Type at least 2 characters..." />
+      </label>
+      <div id="joinResults" class="join-results muted">Start typing to explore public groups.</div>
+    `;
+    let searchTimer = null;
+
+    async function performSearch(query) {
+      const panel = $('#joinResults', wrap);
+      if (!panel) return;
+      const q = (query || '').trim();
+      if (q.length < 2) {
+        panel.innerHTML = `<div class="muted">Type at least 2 characters to search.</div>`;
+        return;
+      }
+      panel.innerHTML = `<div class="muted">Searching&hellip;</div>`;
+      try {
+        const res = await getJSON(`/groups/?discover=1&q=${encodeURIComponent(q)}`);
+        const results = res?.results || [];
+        if (!results.length) {
+          panel.innerHTML = `<div class="muted">No public groups found.</div>`;
+          return;
+        }
+        panel.innerHTML = results.map((g) => `
+          <article class="join-card">
+            <div class="join-card__meta">
+              <div class="row" style="gap:8px; align-items:center;">
+                <span class="group-dot" style="background:${g.color || '#6b9bff'}"></span>
+                <strong>${g.name}</strong>
+                ${g.is_private ? '<span class="chip chip-private">Private</span>' : ''}
+              </div>
+              <div class="muted" style="font-size:13px;">${(g.member_count || 0)} member${g.member_count === 1 ? '' : 's'}</div>
+            </div>
+            <div class="join-card__desc">${g.description || '<span class="muted">No description</span>'}</div>
+            <div class="row" style="justify-content:flex-end;">
+              <button class="primary-btn" data-join="${g.id}" ${g.is_private ? 'disabled' : ''}>${g.is_private ? 'Private' : 'Join'}</button>
+            </div>
+          </article>
+        `).join('');
+        $$('[data-join]', panel).forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const groupId = btn.dataset.join;
+            if (!groupId) return;
+            const original = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Joining...';
+            try {
+              await postJSON(`/groups/${groupId}/join/`, {});
+              await loadGroups();
+              saveState();
+              closeModal();
+              render();
+            } catch (e) {
+              alert(e?.data?.detail || e.message || 'Unable to join group');
+              btn.disabled = false;
+              btn.textContent = original;
+            }
+          });
+        });
+      } catch (e) {
+        panel.innerHTML = `<div class="muted">Search failed. Please try again.</div>`;
+      }
+    }
+
+    openModal('Join Group', wrap, {
+      onOpen() {
+        const input = $('#joinSearch', wrap);
+        if (input) {
+          input.addEventListener('input', () => {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => performSearch(input.value), 300);
+          });
+          input.focus();
+        }
+      }
+    });
+  }
+
   function renderGroups() {
     const app = document.getElementById('app');
     const container = document.createElement('div');
@@ -529,6 +729,8 @@
     `;
     app.replaceChildren(container);
     $('#createGroupBtn').addEventListener('click', () => openGroupEditor());
+    const joinBtn = $('#joinGroupBtn');
+    if (joinBtn) joinBtn.addEventListener('click', () => openJoinGroupDialog());
 
     const q = $('#groupSearch');
     const side = $('#groupSideList');
@@ -574,6 +776,41 @@
           </div>
           <div class="group-content">
             ${photos.length ? `<div class="post-grid">${photos.map(renderPostCardHTML).join('')}</div>` : `<div class="muted" style="padding:12px;">No photos yet. Be the first to post!</div>`}
+    const grid = $('#groupGrid');
+    if (!groups.length) {
+      grid.innerHTML = `
+        <section class="group-card" style="grid-column:1 / -1; text-align:center; padding:32px;">
+          <div class="muted" style="margin-bottom:12px;">No groups yet.</div>
+          <div class="row" style="gap:8px; justify-content:center;">
+            <button class="primary-btn" id="groupsJoinCta">Join Group</button>
+            <button class="ghost-btn" id="groupsCreateCta">Create Group</button>
+          </div>
+        </section>
+      `;
+      $('#groupsJoinCta').addEventListener('click', () => openJoinGroupDialog());
+      $('#groupsCreateCta').addEventListener('click', () => openGroupEditor());
+      return;
+    }
+    groups.forEach(g => {
+      const postedToday = (g.posts || []).some(p => (p.userId === currentUser.id || p.userName === (currentUser.name || '')) && p.date === todayISO());
+      const memberCount = g.memberCount ?? g.members.length;
+      const memberLabel = `${memberCount} member${memberCount === 1 ? '' : 's'}`;
+      const tile = document.createElement('div');
+      tile.className = 'group-tile';
+      tile.innerHTML = `
+        <div class="tile-head">
+          <span class="group-dot" style="background:${g.color}"></span>
+          <div>
+            <div class="row" style="gap:6px; align-items:center;">
+              <div style="font-weight:600">${g.name}</div>
+              ${g.isPrivate ? '<span class="chip chip-private">Private</span>' : ''}
+            </div>
+            <div class="muted" style="font-size:13px">${memberLabel} • ${postedToday ? 'Posted today ✅' : 'Post today required'}</div>
+          </div>
+          <div class="tile-actions">
+            <button class="ghost-btn" data-act="open">Open</button>
+            ${g.isCreator ? '<button class="ghost-btn" data-act="edit">Edit</button>' : ''}
+            <button class="ghost-btn" data-act="lb">🏆</button>
           </div>
         </div>
       `;
@@ -657,7 +894,7 @@
     for (let i = 0; i < 30; i++) { // simple cap
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const iso = d.toISOString().slice(0,10);
+      const iso = d.toISOString().slice(0, 10);
       const me = (currentUser.name || '');
       const posted = groups.some(g => (g.posts || []).some(p => p && (p.userId === currentUser.id || p.userName === me) && p.date === iso));
       if (posted) streak++; else break;
@@ -782,9 +1019,11 @@
       <div><strong>${post.userName}</strong></div>
       <div class="muted">${post.caption || ''}</div>
     `;
-    openModal('Post', wrap, { onOpen(root){
-      if ($('#editBtn', wrap)) $('#editBtn', wrap).addEventListener('click', () => { closeModal(); openEditPostModal(post, group); });
-    }});
+    openModal('Post', wrap, {
+      onOpen(root) {
+        if ($('#editBtn', wrap)) $('#editBtn', wrap).addEventListener('click', () => { closeModal(); openEditPostModal(post, group); });
+      }
+    });
   }
 
   function openEditPostModal(post, group) {
@@ -793,7 +1032,7 @@
     wrap.innerHTML = `
       <img src="${post.imageUrl}" alt="Post" style="width:100%; border-radius:12px;"/>
       <label>Caption
-        <input id="caption" class="search-input" value="${(post.caption||'').replace(/"/g,'&quot;')}" />
+        <input id="caption" class="search-input" value="${(post.caption || '').replace(/"/g, '&quot;')}" />
       </label>
       <div class="row" style="justify-content:space-between;">
         <button class="ghost-btn" id="deleteBtn">Delete</button>
@@ -803,27 +1042,33 @@
         </div>
       </div>
     `;
-    openModal('Edit Post', wrap, { onOpen(){
-      $('#saveBtn', wrap).addEventListener('click', () => {
-        post.caption = $('#caption', wrap).value;
-        saveState();
-        closeModal();
-        render();
-      });
-      $('#deleteBtn', wrap).addEventListener('click', () => {
-        group.posts = group.posts.filter(p => p.id !== post.id);
-        saveState();
-        closeModal();
-        render();
-      });
-    }});
+    openModal('Edit Post', wrap, {
+      onOpen() {
+        $('#saveBtn', wrap).addEventListener('click', () => {
+          post.caption = $('#caption', wrap).value;
+          saveState();
+          closeModal();
+          render();
+        });
+        $('#deleteBtn', wrap).addEventListener('click', () => {
+          group.posts = group.posts.filter(p => p.id !== post.id);
+          saveState();
+          closeModal();
+          render();
+        });
+      }
+    });
   }
 
   // Group Editor ------------------------------------------------------------
   function openGroupEditor(group) {
     if (!currentUser || currentUser.id === 'anon') { openAuthModal(); return; }
     const isNew = !group;
-    const model = group ? { ...group } : { name: '', color: '#6b9bff', description: '' };
+    if (!isNew && group && !group.isCreator) {
+      alert('Only the group creator can edit this group.');
+      return;
+    }
+    const model = group ? { ...group } : { name: '', color: '#6b9bff', description: '', isPrivate: false };
     const wrap = document.createElement('div');
     wrap.innerHTML = `
       <div class="grid">
@@ -836,6 +1081,7 @@
         <label>Description
           <textarea id="gDesc" class="search-input" rows="3" placeholder="What\'s this group about?">${model.description}</textarea>
         </label>
+        
         <div class="row" style="justify-content:flex-end; gap:8px;">
           ${!isNew ? '<button class="ghost-btn" id="delete">Delete</button>' : ''}
           <button class="ghost-btn" data-close>Cancel</button>
@@ -888,7 +1134,7 @@
   // Boot -------------------------------------------------------------------
   function refreshAvatar() {
     const avatar = document.querySelector('.avatar');
-    const initials = (currentUser.name || '').split(' ').map(s => s[0]).slice(0,2).join('').toUpperCase();
+    const initials = (currentUser.name || '').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase();
     if (avatar) avatar.textContent = initials || currentUser.initials || 'ME';
   }
 
@@ -909,7 +1155,7 @@
       } else {
         groups = [];
       }
-    } catch {}
+    } catch { }
     refreshAvatar();
     if (!location.hash) location.hash = '#groups';
     notifyDaily();
@@ -954,4 +1200,59 @@
   }
 
   init();
+
+  function openLeaderboardModal(group, initialPeriod = 'weekly') {
+    let period = initialPeriod; // 'daily' | 'weekly' | 'monthly'
+    const wrap = document.createElement('div');
+
+    function paint() {
+      const rows = buildLeaderboard(group, period);
+      wrap.innerHTML = `
+      <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <div class="row" style="gap:10px;">
+          <span class="group-dot" style="background:${group.color}"></span>
+          <strong>${group.name}</strong>
+        </div>
+        <div class="row" style="gap:6px;">
+          <button class="ghost-btn ${period === 'daily' ? 'is-active' : ''}" data-p="daily">Daily</button>
+          <button class="ghost-btn ${period === 'weekly' ? 'is-active' : ''}" data-p="weekly">Weekly</button>
+          <button class="ghost-btn ${period === 'monthly' ? 'is-active' : ''}" data-p="monthly">Monthly</button>
+        </div>
+      </div>
+      <div class="table" style="overflow:auto; max-height:60vh;">
+        <table style="width:100%; border-collapse:collapse;">
+          <thead>
+            <tr>
+              <th style="text-align:left; padding:8px;">#</th>
+              <th style="text-align:left; padding:8px;">Member</th>
+              <th style="text-align:right; padding:8px;">Active Days</th>
+              <th style="text-align:right; padding:8px;">Posts</th>
+              <th style="text-align:right; padding:8px;">Current Streak</th>
+              <th style="text-align:left; padding:8px;">Last Post</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td style="padding:8px;">${r.rank}</td>
+                <td style="padding:8px;">${r.name}</td>
+                <td style="padding:8px; text-align:right;">${r.activeDays}</td>
+                <td style="padding:8px; text-align:right;">${r.totalPosts}</td>
+                <td style="padding:8px; text-align:right;">${r.streak}</td>
+                <td style="padding:8px;">${r.lastPost ? fmtDate(r.lastPost) : '<span class="muted">—</span>'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+      // wire period buttons
+      wrap.querySelectorAll('[data-p]').forEach(btn => {
+        btn.addEventListener('click', () => { period = btn.dataset.p; paint(); });
+      });
+    }
+
+    paint();
+    openModal('🏆 Leaderboard', wrap);
+  }
 })();

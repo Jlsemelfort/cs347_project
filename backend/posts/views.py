@@ -1,19 +1,20 @@
-from rest_framework import generics, viewsets, status
+from rest_framework import generics, viewsets, status, mixins
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.filters import SearchFilter
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from .permissions import IsAuthorOrReadOnly
 from django.contrib.auth.models import User
-from .serializers import UserSerializer, GroupSerializer, PostSerializer, ProfileSerializer
-from .models import Group, Post, Profile
-from rest_framework import mixins
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import Q
+
+from .permissions import IsAuthorOrReadOnly
+from .serializers import UserSerializer, GroupSerializer, PostSerializer, ProfileSerializer
+from .models import Group, Post, Profile
+
 
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
@@ -22,8 +23,8 @@ class RegisterView(generics.CreateAPIView):
 
 
 class ProfileViewSet(mixins.RetrieveModelMixin,
-                   mixins.UpdateModelMixin,
-                   viewsets.GenericViewSet):
+                     mixins.UpdateModelMixin,
+                     viewsets.GenericViewSet):
     queryset = Profile.objects.all()
     serializer_class = ProfileSerializer
     permission_classes = [IsAuthenticated]
@@ -37,7 +38,6 @@ class GroupViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        # Only groups the user owns or has joined
         user = self.request.user
         return Group.objects.filter(Q(owner=user) | Q(members=user)).distinct().order_by('-created_at')
 
@@ -83,11 +83,8 @@ class PostViewSet(viewsets.ModelViewSet):
         post_ids = request.data.get('post_ids', [])
         if not post_ids:
             return Response({"detail": "No post IDs provided."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Filter posts to ensure only the requesting user's posts are considered
         posts_to_delete = Post.objects.filter(id__in=post_ids, author=request.user)
         deleted_count, _ = posts_to_delete.delete()
-
         return Response({"detail": f"Successfully deleted {deleted_count} posts."}, status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
@@ -99,10 +96,7 @@ class PostViewSet(viewsets.ModelViewSet):
 
 @csrf_exempt
 def upload_post(request):
-    """Handle multipart upload from the prototype UI.
-    Expects fields: image (file), caption (str), group_id (int), user_name (str - ignored, derived from request.user)
-    Returns JSON with id, user_name, caption, date, image_url.
-    """
+    """Upload from SPA: multipart image, caption, group_id."""
     if request.method != 'POST':
         return JsonResponse({"detail": "Method not allowed"}, status=405)
     if not request.user.is_authenticated:
@@ -114,7 +108,6 @@ def upload_post(request):
     if not image or not group_id:
         return JsonResponse({"detail": "image and group_id are required"}, status=400)
     group = get_object_or_404(Group, id=group_id)
-    # Must be owner or member to post
     if not (group.owner_id == request.user.id or group.members.filter(id=request.user.id).exists()):
         return JsonResponse({"detail": "Join the group to post."}, status=403)
     with transaction.atomic():

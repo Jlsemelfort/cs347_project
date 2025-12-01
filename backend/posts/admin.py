@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Group, Post, GroupMembership, Profile, AuditLog
+from .models import Group, Post, GroupMembership, Profile, AuditLog, GroupInvite
 
 
 @admin.register(Group)
@@ -15,8 +15,14 @@ class PostAdmin(admin.ModelAdmin):
 
 @admin.register(GroupMembership)
 class GroupMembershipAdmin(admin.ModelAdmin):
-    list_display = ("user", "group", "date_joined")
-    list_filter = ("group",)
+    list_display = ("user", "group", "role", "date_joined")
+    list_filter = ("group", "role")
+
+
+@admin.register(GroupInvite)
+class GroupInviteAdmin(admin.ModelAdmin):
+    list_display = ("group", "code", "created_by", "expires_at", "created_at")
+    search_fields = ("code",)
 
 
 @admin.register(Profile)

@@ -1,8 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from django.db.models.signals import post_delete
 from django.utils import timezone
 import secrets
 
@@ -12,16 +11,21 @@ class Profile(models.Model):
     bio = models.TextField(blank=True)
 
     def __str__(self):
-        return f'{self.user.username} Profile'
+        return f"{self.user.username} Profile"
+
 
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
     if created:
         Profile.objects.create(user=instance)
 
+
 @receiver(post_save, sender=User)
 def save_user_profile(sender, instance, **kwargs):
-    instance.profile.save()
+    try:
+        instance.profile.save()
+    except Exception:
+        pass
 
 
 class Group(models.Model):
@@ -47,7 +51,7 @@ class GroupMembership(models.Model):
     date_joined = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('user', 'group')
+        unique_together = ("user", "group")
 
 
 class GroupInvite(models.Model):
@@ -97,19 +101,22 @@ class Post(models.Model):
 
 class AuditLog(models.Model):
     ACTION_CHOICES = (
-        ("create", "create"),
-        ("update", "update"),
-        ("delete", "delete"),
+        ("create", "Create"),
+        ("update", "Update"),
+        ("delete", "Delete"),
     )
     user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
-    action = models.CharField(max_length=16, choices=ACTION_CHOICES)
-    model = models.CharField(max_length=64)
+    action = models.CharField(max_length=12, choices=ACTION_CHOICES)
+    model = models.CharField(max_length=50)
     object_id = models.CharField(max_length=64)
     details = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
-        return f"{self.created_at:%Y-%m-%d %H:%M} {self.action} {self.model}#{self.object_id}"
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self) -> str:
+        return f"{self.created_at:%Y-%m-%d %H:%M} {self.user or 'system'} {self.action} {self.model}#{self.object_id}"
 
 
 def _log_action(user: User | None, action: str, instance: models.Model):
@@ -122,7 +129,6 @@ def _log_action(user: User | None, action: str, instance: models.Model):
             details=str(instance),
         )
     except Exception:
-        # Logging should not break app behavior
         pass
 
 
@@ -144,23 +150,3 @@ def log_group_save(sender, instance: 'Group', created: bool, **kwargs):
 @receiver(post_delete, sender=Group)
 def log_group_delete(sender, instance: 'Group', **kwargs):
     _log_action(getattr(instance, '_actor', None), 'delete', instance)
-
-
-class AuditLog(models.Model):
-    ACTION_CHOICES = (
-        ("create", "Create"),
-        ("update", "Update"),
-        ("delete", "Delete"),
-    )
-    user = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
-    action = models.CharField(max_length=12, choices=ACTION_CHOICES)
-    model = models.CharField(max_length=50)
-    object_id = models.CharField(max_length=64)
-    details = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ("-created_at",)
-
-    def __str__(self) -> str:
-        return f"{self.created_at:%Y-%m-%d %H:%M} {self.user or 'system'} {self.action} {self.model}#{self.object_id}"
