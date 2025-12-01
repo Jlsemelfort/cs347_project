@@ -128,9 +128,10 @@
           try { await postJSON('/auth/logout/', {}); } catch {}
           currentUser = { id: 'anon', name: 'Guest', initials: 'GU' };
           groups = [];
+          selectedGroupId = null;
           refreshAvatar();
           closeModal();
-          if (routeFromHash() !== 'home') location.hash = '#home';
+          if (routeFromHash() !== 'groups') location.hash = '#groups';
           render();
         });
       }
@@ -142,7 +143,7 @@
   }
 
   function saveState() {
-    localStorage.setItem('dg_state', JSON.stringify({ groups, currentUser }));
+    localStorage.setItem('dg_state', JSON.stringify({ groups, currentUser, selectedGroupId }));
   }
   function loadState() {
     const raw = localStorage.getItem('dg_state');
@@ -209,6 +210,7 @@
   // --- State (loaded from backend) ---------------------------------------
   let currentUser = { id: 'anon', name: 'Guest', initials: 'GU' };
   let groups = [];
+  let selectedGroupId = null;
 
   async function initAuth() {
     try {
@@ -227,10 +229,14 @@
       name: g.name,
       color: g.color || '#6b9bff',
       description: g.description || '',
-      members: [],
+      members: Array.isArray(g.members) ? g.members : [],
+      memberNames: Array.isArray(g.member_usernames) ? g.member_usernames : [],
       posts: [],
       expanded: idx === 0, // first group open
     }));
+    if (!selectedGroupId && groups.length) {
+      selectedGroupId = groups[0].id;
+    }
     // Load posts for each group
     await Promise.all(groups.map(async (g) => {
       try {
@@ -251,7 +257,7 @@
 
   // --- Simple router -------------------------------------------------------
   function routeFromHash() {
-    return location.hash.replace('#', '') || 'home';
+    return location.hash.replace('#', '') || 'groups';
   }
   function setActiveTab(route) {
     $$('.nav-tab').forEach((a) => a.classList.toggle('is-active', a.dataset.route === route));
@@ -262,13 +268,12 @@
   function render() {
     const route = routeFromHash();
     setActiveTab(route);
-    if (route === 'home') renderHome();
-    else if (route === 'groups') renderGroups();
+    if (route === 'groups') renderGroups();
     else if (route === 'user') renderUser();
-    else renderHome();
+    else renderGroups();
   }
 
-  // Home View ---------------------------------------------------------------
+  // Home View (legacy) ------------------------------------------------------
   function renderHome() {
     const app = document.getElementById('app');
     const container = document.createElement('div');
@@ -304,6 +309,108 @@
     }
     q.addEventListener('input', paint);
     paint();
+  }
+
+  // Home View (new) ---------------------------------------------------------
+  function renderHomeV2() {
+    const app = document.getElementById('app');
+    const container = document.createElement('div');
+    if (!currentUser || currentUser.id === 'anon') {
+      container.innerHTML = `
+        <div class="row" style="justify-content:space-between; margin-bottom:12px;">
+          <h2 style="margin:0">Welcome</h2>
+        </div>
+        <div class="group-card" style="text-align:center; padding:24px;">
+          <div style="font-size:18px; margin-bottom:10px">Sign in to view and post to your groups.</div>
+          <button class="primary-btn" id="homeSignIn">Sign In / Create Account</button>
+        </div>
+      `;
+      app.replaceChildren(container);
+      $('#homeSignIn').addEventListener('click', openAuthModal);
+      return;
+    }
+    container.innerHTML = `
+      <div class="home-layout">
+        <aside class="side-list">
+          <div class="search-row" style="margin-bottom:10px;">
+            <input id="homeSearch" class="search-input" placeholder="Search groups..." />
+            <button id="addGroupBtn" class="primary-btn">+ New</button>
+          </div>
+          <div id="groupSideList"></div>
+        </aside>
+        <section id="groupDetail" class="detail-pane"></section>
+      </div>
+    `;
+    app.replaceChildren(container);
+    $('#addGroupBtn').addEventListener('click', () => openGroupEditor());
+
+    const q = $('#homeSearch');
+    const side = $('#groupSideList');
+    function renderSide() {
+      const term = (q.value || '').trim().toLowerCase();
+      side.replaceChildren(...groups
+        .filter(g => g.name.toLowerCase().includes(term))
+        .map(g => {
+          const el = document.createElement('button');
+          el.className = `side-item ${String(g.id) === String(selectedGroupId) ? 'selected' : ''}`;
+          const postedToday = (g.posts || []).some(p => (p.userId === currentUser.id || p.userName === (currentUser.name||'')) && p.date === todayISO());
+          el.innerHTML = `
+            <span class="group-dot" style="background:${g.color}"></span>
+            <div class="side-meta">
+              <div class="name">${g.name}</div>
+              <div class="muted small">${(Array.isArray(g.members) ? g.members.length : (Array.isArray(g.memberNames) ? g.memberNames.length : 0))} members • ${postedToday ? 'Posted today ✅' : 'Post today required'}</div>
+            </div>`;
+          el.addEventListener('click', () => { selectedGroupId = g.id; saveState(); renderGroupDetail(); renderSide(); });
+          return el;
+        }));
+    }
+    function renderGroupDetail() {
+      const pane = $('#groupDetail');
+      const g = groups.find(x => String(x.id) === String(selectedGroupId)) || groups[0];
+      if (!g) { pane.innerHTML = '<div class="muted">No groups yet. Create one to get started.</div>'; return; }
+      const uniqueUsers = g.memberNames && g.memberNames.length ? g.memberNames : Array.from(new Set((g.posts||[]).map(p => p.userName).filter(Boolean)));
+      const photos = (g.posts || []);
+      const me = (currentUser && currentUser.name) || '';
+      const postedToday = (g.posts || []).some(p => (p && (p.userId === currentUser.id || p.userName === me) && p.date === todayISO()));
+      pane.innerHTML = `
+        <div class="group-card">
+          <div class="group-hero">
+            <div class="row" style="gap:12px; align-items:center;">
+              <span class="group-dot" style="width:18px; height:18px; background:${g.color}"></span>
+              <h2 class="group-title" style="margin:0; font-size:22px;">${g.name}</h2>
+            </div>
+            <div class="row" style="gap:8px;">
+              <span class="chip">${(Array.isArray(g.members) ? g.members.length : (Array.isArray(g.memberNames) ? g.memberNames.length : 0))} member${((Array.isArray(g.members) ? g.members.length : (Array.isArray(g.memberNames) ? g.memberNames.length : 0)) === 1) ? '' : 's'}</span>
+              ${uniqueUsers.slice(0,6).map(n => `<span class="chip">${n}</span>`).join('')}
+            </div>
+            <div class="muted">${g.description || 'No description'}</div>
+            <div class="row" style="gap:8px;">
+              <button class="primary-btn" id="addPhotoBtn">+ Add Photo</button>
+              <a class="ghost-btn" href="/groups/${g.id}/invite/" target="_blank">Invite</a>
+            </div>
+          </div>
+          <div class="group-content">
+            ${postedToday
+              ? (photos.length ? `<div class="post-grid">${photos.map(renderPostCardHTML).join('')}</div>` : `<div class="muted" style="padding:12px;">No photos yet. Be the first to post!</div>`)
+              : `<div class="group-card" style="text-align:center; padding:14px; background: rgba(255,255,255,.03); border-radius: 12px;">
+                   <div style="font-weight:600;">Feed locked</div>
+                   <div class="muted">Post a photo today to view others' posts.</div>
+                   <div class="row" style="justify-content:center; margin-top:8px;">
+                     <button class="primary-btn" id="unlockBtn">Post Now</button>
+                   </div>
+                 </div>`}
+          </div>
+        </div>
+      `;
+      const addBtn = $('#addPhotoBtn', pane);
+      if (addBtn) addBtn.addEventListener('click', () => openAddPostDialog(g.id));
+      const unlock = $('#unlockBtn', pane);
+      if (unlock) unlock.addEventListener('click', () => openAddPostDialog(g.id));
+      $$('.post-card', pane).forEach((el) => attachPostHandlers(el, g.id));
+    }
+    q.addEventListener('input', () => { renderSide(); });
+    renderSide();
+    renderGroupDetail();
   }
 
   function renderGroupCard(group) {
@@ -398,7 +505,7 @@
     if (!currentUser || currentUser.id === 'anon') {
       container.innerHTML = `
         <div class="row" style="justify-content:space-between; margin-bottom:12px;">
-          <h2 style="margin:0">Your Groups</h2>
+          <h2 style="margin:0">Groups</h2>
         </div>
         <div class="group-card" style="text-align:center; padding:24px;">
           <div class="muted" style="font-size:16px; margin-bottom:10px">Please sign in to view your groups.</div>
@@ -409,40 +516,76 @@
       return;
     }
     container.innerHTML = `
-      <div class="row" style="justify-content:space-between; margin-bottom:12px;">
-        <h2 style="margin:0">Your Groups</h2>
-        <button class="primary-btn" id="createGroupBtn">+ Create Group</button>
+      <div class="home-layout">
+        <aside class="side-list">
+          <div class="search-row" style="margin-bottom:10px;">
+            <input id="groupSearch" class="search-input" placeholder="Search groups..." />
+            <button id="createGroupBtn" class="primary-btn">+ New</button>
+          </div>
+          <div id="groupSideList"></div>
+        </aside>
+        <section id="groupDetail" class="detail-pane"></section>
       </div>
-      <div class="grid cols-3" id="groupGrid"></div>
     `;
     app.replaceChildren(container);
     $('#createGroupBtn').addEventListener('click', () => openGroupEditor());
 
-    const grid = $('#groupGrid');
-    groups.forEach(g => {
-      const postedToday = (g.posts || []).some(p => (p.userId === currentUser.id || p.userName === (currentUser.name||'')) && p.date === todayISO());
-      const tile = document.createElement('div');
-      tile.className = 'group-tile';
-      tile.innerHTML = `
-        <div class="tile-head">
-          <span class="group-dot" style="background:${g.color}"></span>
-          <div>
-            <div style="font-weight:600">${g.name}</div>
-            <div class="muted" style="font-size:13px">${g.members.length} members • ${postedToday ? 'Posted today ✅' : 'Post today required'}</div>
+    const q = $('#groupSearch');
+    const side = $('#groupSideList');
+    function renderSide() {
+      const term = (q.value || '').trim().toLowerCase();
+      side.replaceChildren(...groups
+        .filter(g => g.name.toLowerCase().includes(term))
+        .map(g => {
+          const el = document.createElement('button');
+          el.className = `side-item ${String(g.id) === String(selectedGroupId) ? 'selected' : ''}`;
+          const postedToday = (g.posts || []).some(p => (p.userId === currentUser.id || p.userName === (currentUser.name||'')) && p.date === todayISO());
+          el.innerHTML = `
+            <span class="group-dot" style="background:${g.color}"></span>
+            <div class="side-meta">
+              <div class="name">${g.name}</div>
+              <div class="muted small">${Array.isArray(g.members) ? g.members.length : 0} members • ${postedToday ? 'Posted today ✅' : 'Post today required'}</div>
+            </div>`;
+          el.addEventListener('click', () => { selectedGroupId = g.id; saveState(); renderGroupDetail(); renderSide(); });
+          return el;
+        }));
+    }
+    function renderGroupDetail() {
+      const pane = $('#groupDetail');
+      const g = groups.find(x => String(x.id) === String(selectedGroupId)) || groups[0];
+      if (!g) { pane.innerHTML = '<div class="muted">No groups yet. Create one to get started.</div>'; return; }
+      const uniqueUsers = Array.from(new Set((g.posts||[]).map(p => p.userName).filter(Boolean)));
+      const photos = (g.posts || []);
+      pane.innerHTML = `
+        <div class="group-card">
+          <div class="group-hero">
+            <div class="row" style="gap:12px; align-items:center;">
+              <span class="group-dot" style="width:18px; height:18px; background:${g.color}"></span>
+              <h2 class="group-title" style="margin:0; font-size:22px;">${g.name}</h2>
+            </div>
+            <div class="row" style="gap:8px;">
+              <span class="chip">${Array.isArray(g.members) ? g.members.length : 0} member${(Array.isArray(g.members) ? g.members.length : 0) === 1 ? '' : 's'}</span>
+              ${uniqueUsers.slice(0,6).map(n => `<span class="chip">${n}</span>`).join('')}
+            </div>
+            <div class="muted">${g.description || 'No description'}</div>
+            <div class="row" style="gap:8px;">
+              <button class="primary-btn" id="addPhotoBtn">+ Add Photo</button>
+            </div>
           </div>
-          <div class="tile-actions">
-            <button class="ghost-btn" data-act="open">Open</button>
-            <button class="ghost-btn" data-act="edit">Edit</button>
+          <div class="group-content">
+            ${photos.length ? `<div class="post-grid">${photos.map(renderPostCardHTML).join('')}</div>` : `<div class="muted" style="padding:12px;">No photos yet. Be the first to post!</div>`}
           </div>
         </div>
-        <div class="muted">${g.description || ''}</div>
       `;
-      tile.querySelector('[data-act="open"]').addEventListener('click', () => { location.hash = '#home'; requestAnimationFrame(() => {
-        g.expanded = true; saveState(); render();
-      }); });
-      tile.querySelector('[data-act="edit"]').addEventListener('click', () => openGroupEditor(g));
-      grid.appendChild(tile);
-    });
+      const addBtn = $('#addPhotoBtn', pane);
+      if (addBtn) addBtn.addEventListener('click', () => openAddPostDialog(g.id));
+      $$('.post-card', pane).forEach((el) => attachPostHandlers(el, g.id));
+    }
+    q.addEventListener('input', () => { renderSide(); });
+    // Ensure we have a selection by default
+    if (!selectedGroupId && groups.length) selectedGroupId = groups[0].id;
+    renderSide();
+    renderGroupDetail();
   }
 
   // User View ---------------------------------------------------------------
@@ -492,7 +635,7 @@
           </div>
         </div>
       `;
-      el.querySelector('[data-act="open"]').addEventListener('click', () => { location.hash = '#home'; requestAnimationFrame(render); });
+      el.querySelector('[data-act="open"]').addEventListener('click', () => { location.hash = '#groups'; requestAnimationFrame(() => { selectedGroupId = g.id; saveState(); render(); }); });
       list.appendChild(el);
     });
   }
@@ -710,11 +853,11 @@
             const created = await postJSON('/groups/', { name, color, description });
             // Reload from backend to normalize shape and fetch posts
             await loadGroups();
-            // Expand the newly created group on Home
-            const ng = groups.find(x => String(x.id) === String(created.id));
-            if (ng) ng.expanded = true;
+            // Focus the newly created group on Home
+            selectedGroupId = created?.id || selectedGroupId;
+            saveState();
             // Navigate to Home to surface the new group
-            if (routeFromHash() !== 'home') location.hash = '#home';
+            if (routeFromHash() !== 'groups') location.hash = '#groups';
           } else {
             const g = await patchJSON(`/groups/${group.id}/`, { name, color, description });
             const idx = groups.findIndex(x => x.id === group.id);
@@ -731,6 +874,7 @@
         try {
           await deleteJSON(`/groups/${group.id}/`);
           groups = groups.filter(g => g.id !== group.id);
+          if (!groups.length) selectedGroupId = null; else if (String(selectedGroupId) === String(group.id)) selectedGroupId = groups[0].id;
           saveState();
           closeModal();
           render();
@@ -752,6 +896,12 @@
   if (userBtn) userBtn.addEventListener('click', openAuthModal);
 
   async function init() {
+    try {
+      const st = loadState && loadState();
+      if (st && typeof st === 'object') {
+        selectedGroupId = st.selectedGroupId || null;
+      }
+    } catch {}
     try { await initAuth(); } catch {}
     try {
       if (currentUser && currentUser.id !== 'anon') {
@@ -761,8 +911,46 @@
       }
     } catch {}
     refreshAvatar();
-    if (!location.hash) location.hash = '#home';
+    if (!location.hash) location.hash = '#groups';
+    notifyDaily();
     render();
+  }
+
+  function groupsNeedingPostToday() {
+    const me = (currentUser.name || '');
+    const today = todayISO();
+    return groups.filter(g => !((g.posts || []).some(p => p && (p.userId === currentUser.id || p.userName === me) && p.date === today)));
+  }
+
+  function notifyDaily() {
+    if (!currentUser || currentUser.id === 'anon') return;
+    const today = todayISO();
+    const key = 'dg_last_notice';
+    const last = localStorage.getItem(key);
+    const due = last !== today;
+    const missing = groupsNeedingPostToday();
+    if (missing.length && due) {
+      const bar = document.createElement('div');
+      bar.className = 'notice-bar';
+      bar.innerHTML = `
+        <div class="row" style="justify-content:space-between; align-items:center; width:100%;">
+          <div><strong>Daily reminder:</strong> You have ${missing.length} group${missing.length!==1?'s':''} to post in today.</div>
+          <div class="row" style="gap:8px;">
+            <button class="ghost-btn" id="jumpBtn">Review</button>
+            <button class="ghost-btn" id="dismissBtn" aria-label="Dismiss">Dismiss</button>
+          </div>
+        </div>`;
+      document.body.appendChild(bar);
+      $('#dismissBtn', bar).addEventListener('click', () => { bar.remove(); localStorage.setItem(key, today); });
+      $('#jumpBtn', bar).addEventListener('click', () => {
+        location.hash = '#groups';
+        selectedGroupId = missing[0]?.id || selectedGroupId;
+        saveState();
+        bar.remove();
+        localStorage.setItem(key, today);
+        render();
+      });
+    }
   }
 
   init();
