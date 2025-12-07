@@ -16,7 +16,7 @@ from django.forms.models import model_to_dict  # if used elsewhere; otherwise sa
 from django.utils.dateparse import parse_date   # same note
 from django.contrib.auth.decorators import login_required
 
-from ..storage.s3_utils import build_key, presign_upload, presign_download
+from storage.s3_utils import build_key, presign_upload, presign_download
 
 from .models import Group, Post, Profile, Comment, GroupMembership
 from .permissions import IsAuthorOrReadOnly

@@ -150,38 +150,32 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # ---------------------------------------------------------------------------
-# DigitalOcean Spaces / S3-compatible storage
+# AWS S3 storage
 # ---------------------------------------------------------------------------
 
-SPACES_BUCKET = os.getenv("SPACES_BUCKET")
-SPACES_REGION = os.getenv("SPACES_REGION")
-SPACES_ENDPOINT = os.getenv("SPACES_ENDPOINT")
-SPACES_CUSTOM_DOMAIN = os.getenv("SPACES_CUSTOM_DOMAIN")
+AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME")
+AWS_REGION = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
 
-if SPACES_BUCKET and (SPACES_ENDPOINT or SPACES_REGION):
+if AWS_STORAGE_BUCKET_NAME and AWS_REGION:
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
     AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-    AWS_STORAGE_BUCKET_NAME = SPACES_BUCKET
 
-    if not SPACES_ENDPOINT and SPACES_REGION:
-        SPACES_ENDPOINT = f"https://{SPACES_REGION}.digitaloceanspaces.com"
-
-    AWS_S3_ENDPOINT_URL = SPACES_ENDPOINT
-    AWS_S3_REGION_NAME = SPACES_REGION
+    # django-storages settings
+    AWS_S3_REGION_NAME = AWS_REGION
     AWS_S3_SIGNATURE_VERSION = "s3v4"
     AWS_QUERYSTRING_AUTH = False
     AWS_S3_OBJECT_PARAMETERS = {"CacheControl": "max-age=86400"}
 
-    _domain = SPACES_CUSTOM_DOMAIN or (
-        f"{SPACES_BUCKET}.{SPACES_REGION}.digitaloceanspaces.com"
-        if SPACES_REGION
-        else None
-    )
+    # Optional: if you have a custom domain / CloudFront distro
+    AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN", "")
 
-    if _domain:
-        MEDIA_URL = f"https://{_domain}/"
+    if AWS_S3_CUSTOM_DOMAIN:
+        MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/"
+    else:
+        # Public bucket URL pattern; fine for testing
+        MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/"
 
-    # Important: actually switch default storage to S3/Spaces
+    # Actually switch default file storage to S3
     STORAGES["default"] = {
         "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
     }
