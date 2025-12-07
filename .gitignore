@@ -28,4 +28,6 @@ storage/
 .env
 *.venv/
 .venv/
-
+# allow S3 helper module
+!backend/storage/
+!backend/storage/s3_utils.py

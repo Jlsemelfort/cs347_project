@@ -16,6 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from ..storage.s3_utils import build_key, presign_upload, presign_download
 import json
+import mimetypes
 
 
 def _group_payload(g: Group) -> dict:
@@ -143,6 +144,28 @@ def group_detail(request, group_id: int):
         return JsonResponse({"ok": True})
 
     return JsonResponse({"detail": "Method not allowed"}, status=405)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def start_photo_upload(request):
+    """
+    Issue a presigned POST so the client can upload directly to S3.
+    Body:
+      {
+        "filename": "photo.jpg",
+        "content_type": "image/jpeg",
+        "group_id": 123  (optional; used in key prefix)
+      }
+    """
+    filename = (request.data.get("filename") or "upload.jpg").strip()
+    content_type = (request.data.get("content_type") or "").strip() or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    group_id = request.data.get("group_id")
+    prefix = f"groups/{group_id}" if group_id else "uploads"
+    key = build_key(filename, prefix=prefix)
+    upload = presign_upload(key, content_type=content_type)
+    return Response({"key": key, "upload": upload})
+
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
