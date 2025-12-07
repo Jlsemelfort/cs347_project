@@ -8,7 +8,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.views.decorators.http import require_http_methods
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.utils import timezone
 from django.contrib.auth import login
 from django.contrib.auth.models import User
@@ -28,7 +28,7 @@ def home(request: HttpRequest) -> HttpResponse:
 class OwnerRequiredMixin(UserPassesTestMixin):
     def test_func(self):
         obj = self.get_object()
-        return getattr(obj, "owner", None) == self.request.user
+        return self.request.user.is_superuser or getattr(obj, "owner", None) == self.request.user
 
 
 class GroupListView(LoginRequiredMixin, ListView):
@@ -164,7 +164,15 @@ class PostListView(LoginRequiredMixin, ListView):
     paginate_by = 12
 
     def get_queryset(self):
-        qs = Post.objects.select_related("group", "author").order_by("-created_at")
+        user = self.request.user
+        today = timezone.localdate()
+        qs = (
+            Post.objects.select_related("group", "author")
+            .filter(date=today)
+            .filter(Q(author=user) | Q(group__members=user) | Q(group__owner=user))
+            .order_by("-created_at")
+            .distinct()
+        )
         q = (self.request.GET.get("q") or "").strip()
         if q:
             qs = qs.filter(caption__icontains=q)
@@ -172,6 +180,11 @@ class PostListView(LoginRequiredMixin, ListView):
         if gid:
             qs = qs.filter(group_id=gid)
         return qs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["today"] = timezone.localdate()
+        return ctx
 
 
 class PostDetailView(LoginRequiredMixin, DetailView):
