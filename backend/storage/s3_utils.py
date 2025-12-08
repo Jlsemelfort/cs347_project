@@ -9,8 +9,8 @@ import boto3
 # - AWS_SECRET_ACCESS_KEY
 # - AWS_DEFAULT_REGION (or AWS_REGION)
 # - S3_BUCKET_NAME (preferred) or AWS_STORAGE_BUCKET_NAME
-BUCKET_NAME = os.environ.get("S3_BUCKET_NAME") or os.environ.get("AWS_STORAGE_BUCKET_NAME")
-AWS_REGION = os.environ.get("AWS_DEFAULT_REGION") or os.environ.get("AWS_REGION")
+BUCKET_NAME = os.environ.get("AWS_S3_BUCKET")
+AWS_REGION = os.environ.get("AWS_S3_REGION")
 
 
 def _client():

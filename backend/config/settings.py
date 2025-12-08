@@ -153,8 +153,8 @@ MEDIA_ROOT = BASE_DIR / "media"
 # AWS S3 storage
 # ---------------------------------------------------------------------------
 
-AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME")
-AWS_REGION = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
+AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_S3_BUCKET")
+AWS_REGION = os.getenv("AWS_S3_REGION")
 
 if AWS_STORAGE_BUCKET_NAME and AWS_REGION:
     AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
